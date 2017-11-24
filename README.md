@@ -1,1 +1,2 @@
-# Project Fortune - an LSTM generative neurnal network
+# Project Fortune - an LSTM generative neural network
+practicing some coding.
