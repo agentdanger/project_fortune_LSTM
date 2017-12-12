@@ -1,81 +1,174 @@
-import numpy
-import spacy
-import pandas as pd 
-import re
-#import nltk
 
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.layers import Dropout
-from keras.layers import LSTM
+# coding: utf-8
+
+# In[1]:
+
+
+import numpy as np
+import pandas as pd
+from nltk import FreqDist
+
+
+# In[2]:
+
+
 from keras.callbacks import ModelCheckpoint
+from keras.layers import Activation, Dense, Dropout, Embedding, LSTM, TimeDistributed, Flatten
+from keras.models import Sequential
+from keras.preprocessing import sequence
+from keras.preprocessing.text import text_to_word_sequence
+from keras.preprocessing.sequence import pad_sequences
 from keras.utils import np_utils
 
-nlp = spacy.load('en_core_web_sm')
 
-vocabulary_size = 8000
-unknown_token = 'UNKNOWN_TOKEN'
-sentence_start_token = 'SENTENCE_START'
-sentence_end_token = 'SENTENCE_END'
+# In[3]:
+
+
+vocab_size=6750
+max_len = 350
+HIDDEN_DIM = 1000
+BATCH_SIZE = 50
+LAYER_NUM = 3
+EPOCHS = 10
+LENGTH = 15
+quote_start_token = 'QUOTE_START'
+
+
+# In[4]:
+
 
 print('Reading data...')
 
 filename = 'fortune_quotes.csv'
 data = pd.read_csv(filename)
 df = pd.DataFrame(data)
-quotes = df['quotes']
-quotes_parsed = nlp(quotes) 
+doc = df['quotes']
 
-print(quotes_parsed)
 
-# sentences = itertools.chain(*[space.sent_tokenize(x[0].decode('utf-8').lower()) for x in reader])
-# # Append SENTENCE_START and SENTENCE_END
-# sentences = ["%s %s %s" % (sentence_start_token, x, sentence_end_token) for x in sentenc
+# In[5]:
 
-# sentences = list(doc.sents)
-# assert len(sentences) == 3
 
-# def cleanText(text):
-#     # get rid of newlines
-#     text = text.str.strip().replace('\n', '').replace(
-#     	'\r', '""').replace('"', '').replace('/', '').replace(
-#     	'[', '').replace(']', '').replace('“', '').replace('”', '')
-#     # replace twitter @mentions
-#     mentionFinder = re.compile(r"@[a-z0-9_]{1,15}", re.IGNORECASE)
-#     text = mentionFinder.sub("@MENTION", str(text))
-#     # replace HTML symbols
-#     text = text.replace("&amp;", "and").replace("&gt;", ">").replace(
-#     	"&lt;","<")
-#     # lowercase
-#     text = text.lower()
-#     return text
+quotes_x = []
+quotes_y = []
 
-# def tokenizeText(sample):
-#     # get the tokens using spaCy
-#     tokens = parser(sample)
-#     # lemmatize
-#     # lemmas = []
-#     # for tok in tokens:
-#     #     lemmas.append(tok.lemma_.lower(
-#     #     	).strip() if tok.lemma_ != "-PRON-" else tok.lower_)
-#     # tokens = lemmas
-#     # # stoplist the tokens
-#     # tokens = [tok for tok in tokens]
-#     # # stoplist symbols
-#     # tokens = [tok for tok in tokens]
-#     # # remove large strings of whitespace
-#     # while "" in tokens:
-#     #     tokens.remove("")
-#     # while " " in tokens:
-#     #     tokens.remove(" ")
-#     # while "\n" in tokens:
-#     #     tokens.remove("\n")
-#     # while "\n\n" in tokens:
-#     #     tokens.remove("\n\n")
-#     return tokens
+print('Creating dictionary...')
 
-# clean_text = cleanText(quotes)
-# tokens = tokenizeText(clean_text)
+for quote in doc:
+    quote = quote.replace('/', '').replace('\n', '').replace(
+        '\r', '').replace('"', '').replace('[', '').replace(
+        ']', '').replace('“', '').replace('”', '').replace(
+        '.', '').replace('?', '').replace(':', '').replace(
+        '(', '').replace(')', '').replace(',', '').replace(
+        '-', '').replace(';', '').replace('!', '')
+    quote = quote.lower()
+    quote = '{} {}'.format(quote_start_token, quote)
+    quote = text_to_word_sequence(quote, filters='!"#$%&()*+,-./:;<=>?@[\\]^`{|}~\t\n')
+    quotes_x.append(np.copy(quote))
+    quotes_y.append(np.copy(quote))
 
-# print(clean_text)
-# print(tokens)
+distribution_x = FreqDist(np.hstack(quotes_x))
+quotes_vocab_x = distribution_x.most_common(vocab_size-1)
+
+print('Formatting data for analysis...')
+
+x_ix_to_word = [word[0] for word in quotes_vocab_x]
+x_ix_to_word.insert(0, 'ZERO_TOKEN')
+x_ix_to_word.append('UNKNOWN_TOKEN')
+
+x_word_to_ix = {word:ix for ix, word in enumerate(x_ix_to_word)}
+
+for i, quote in enumerate(quotes_x):
+    for j, word in enumerate(quote):
+        if word in x_word_to_ix:
+            quotes_x[i][j] = x_word_to_ix[word]
+        else:
+            quotes_x[i][j] = x_word_to_ix['UNKNOWN_TOKEN']
+
+distribution_y = FreqDist(np.hstack(quotes_y))
+quotes_vocab_y = distribution_y.most_common(vocab_size-1)
+
+y_ix_to_word = [word[0] for word in quotes_vocab_y]
+y_ix_to_word.insert(0, 'ZERO_TOKEN')
+y_ix_to_word.append('UNKNOWN_TOKEN')
+
+y_word_to_ix = {word:ix for ix, word in enumerate(y_ix_to_word)}
+
+for x, quote in enumerate(quotes_y):
+    for y, word in enumerate(quote):
+        if word in y_word_to_ix:
+            quotes_y[x][y] = y_word_to_ix[word]
+        else:
+            quotes_y[x][y] = y_word_to_ix['UNKNOWN_TOKEN']  
+            
+quotes_max_len_x = max([len(quote) for quote in quotes_x])
+quotes_max_len_y = max([len(quote) for quote in quotes_y])
+
+quotes_y_data = []
+for m in quotes_y:
+    quotes_y_data.append(np.delete(m, 0))
+
+quotes_x_data = pad_sequences(quotes_x, maxlen=quotes_max_len_x,
+                         dtype='int64', padding='post')
+quotes_y_data = pad_sequences(quotes_y_data, maxlen=quotes_max_len_y,
+                              dtype='int64', padding='post')
+
+sequences_x = np.zeros((len(quotes_x_data), quotes_max_len_x, len(x_word_to_ix)))
+for i, quote in enumerate(quotes_x_data):
+    for j, word in enumerate(quote):
+        sequences_x[i, j, word] = 1.
+
+sequences_y = np.zeros((len(quotes_y_data), quotes_max_len_y, len(y_word_to_ix)))
+for x, quote in enumerate(quotes_y_data):
+    for y, word in enumerate(quote):
+        sequences_y[x, y, word] = 1.
+            
+print('Finished!  Parsed, cleaned and formatted {:,} quotes and {:,} unique words for analysis.'.format(
+    len(quotes_x_data), len(x_word_to_ix),))
+
+
+# In[ ]:
+
+
+model = Sequential()
+model.add(LSTM(HIDDEN_DIM, input_shape=(None, len(x_word_to_ix)), return_sequences=True))
+model.add(LSTM(HIDDEN_DIM, return_sequences=True))
+for i in range(LAYER_NUM - 1):
+    model.add(LSTM(HIDDEN_DIM, return_sequences=True))
+model.add(TimeDistributed(Dense(len(x_word_to_ix))))
+model.add(Activation('softmax'))
+model.compile(loss="categorical_crossentropy", optimizer="rmsprop", metrics=['accuracy'])
+print('\n')
+print('Model Ready for Training...')
+print('\n')
+
+# def generate_text(model, LENGTH):
+# 	for i in range(LENGTH):
+# 		X[0, i, :][ix[-1]] = 1
+# 		print(x_ix_to_word[ix[-1]], end="")
+# 		ix = np.argmax(model.predict(X[:, :i+1, :])[0], 1)
+# 		y_word.append(x_ix_to_word[ix[-1]])
+# 	return ('').join(y_word)
+
+# In[ ]:
+
+
+print("Training started...")
+print('\n')
+for i in range(EPOCHS):
+    print('INFO - Training model: Epoch: ', i+1, ' / ', EPOCHS)
+    model.fit(sequences_x,
+              sequences_y,
+              batch_size=BATCH_SIZE,
+              epochs=1,
+              verbose=1,
+              shuffle=False)
+    ix = [2]
+    y_word = [x_ix_to_word[ix[-1]]]
+    X = np.zeros((1, LENGTH, len(x_word_to_ix)))
+    # generate_text(model, LENGTH)
+    if i % 10 == 0:
+        model.save_weights('checkpoint_{}_epoch_{}.hdf5'.format(HIDDEN_DIM, i))
+
+
+print('Training Complete!')
+
